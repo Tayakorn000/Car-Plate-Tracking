@@ -105,22 +105,14 @@ def ocr_plate_multi(frame, x1, y1, x2, y2):
         if scores > 60:
             text = r[0][0]
     pattern = re.compile('[\W]')
+    pattern = r"^[0-9]{1,2}[ก-ฮ]{1,2}[0-9]{1,4}$"
     text = pattern.sub('', text)
     text = text.replace("???", "")
     text = text.replace("O", "0")
     text = text.replace("粤", "")
+    text = text.replace("|", "1")
+    text = text.replace("I", "1")
     return str(text)
-
-# Clean plate text (Thai)
-def clean_plate_text_thai(text):
-    if not text:
-        return None
-    text = text.replace("I", "1").replace("|", "1").replace("O","0")
-    text = text.replace(" ", "")
-    pattern = r"^[0-9]{1,2}[ก-ฮ]{1,2}[0-9]{1,4}$"
-    if re.match(pattern, text):
-        return text
-    return None
 
 # Log detection
 def log_detection(plate_text, filename, bbox):
@@ -134,6 +126,7 @@ def log_detection(plate_text, filename, bbox):
             writer.writerow([ts, plate_text, filename, str(bbox)])
     except Exception as e:
         print("log_detection error:", e)
+        
 def save_json(license_plates, startTime, endTime):
     #Generate individual JSON files for each 20-second interval
     interval_data = {
@@ -211,7 +204,7 @@ class App:
     def __init__(self, root):
         self.root = root
         root.title("Red Light Plate Tracker")
-        root.geometry("1280x720")
+        root.geometry("1920x1080")
         self.video_src = 0
         self.cap = None
         self.running = False
@@ -223,10 +216,7 @@ class App:
         self.plate_model = None
         self.device = "cuda" if _gpu_available else "cpu"
         print(f"Device: {self.device}")
-        if _yolo_available:
-            self.plate_model = ensure_yolo_model("yolov10n")
-            if not self.plate_model:
-                self.plate_model = ensure_yolo_model("yolov11n")
+        self.plate_model = ensure_yolo_model("yolov10n")
         # detection threading
         self.det_queue = Queue(maxsize=1)
         self.latest_detections = []
@@ -819,4 +809,5 @@ if __name__ == "__main__":
     root.after(30, app.update_canvas)
     root.protocol("WM_DELETE_WINDOW", app.stop)
     root.mainloop()
+
 

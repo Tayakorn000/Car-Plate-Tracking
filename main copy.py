@@ -1,7 +1,9 @@
 # red_light_plate_tracker_fast_fixed.py
+import json
 import os
 import cv2
 import csv
+from ultralytics import YOLOv10
 import time
 import threading
 import numpy as np
@@ -11,77 +13,14 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 import re
-import easyocr
+from paddleocr import PaddleOCR
 import torch
 
-# --- model availability flags ---
-try:
-    from ultralytics import YOLO
-    _yolo_available = True
-except Exception:
-    _yolo_available = False
-    print("Warning: ultralytics YOLO not found. pip install ultralytics")
-
-try:
-    _ocr_reader = easyocr.Reader(['th','en'], gpu=False)
-except Exception as e:
-    _ocr_reader = None
-    print("Warning: easyocr init failed:", e)
-
-try:
-    _gpu_available = torch.cuda.is_available()
-except Exception:
-    _gpu_available = False
-
+# SEE NIGGA 44444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444
+model = YOLOv10("yolov10n.pt")
 CAPTURE_DIR = r"d:\Car plate tracking\captures"
 CSV_PATH = r"d:\Car plate tracking\detections.csv"
 os.makedirs(CAPTURE_DIR, exist_ok=True)
-
-# Helper to load YOLO robustly
-def ensure_yolo_model(model_name="yolov10n"):
-    try:
-        from ultralytics import YOLO
-    except Exception as e:
-        print(f"ultralytics import failed: {e}")
-        return None
-
-    candidates = [f"{model_name}.pt", model_name, f"{model_name}.yaml"]
-    for c in candidates:
-        try:
-            print(f"Trying to load YOLO model: {c}")
-            model = YOLO(c)
-            print(f"Loaded YOLO model: {c}")
-            return model
-        except Exception as e:
-            print(f"Failed to load {c}: {e}")
-    print("No YOLO model loaded.")
-    return None
-
-# Image enhancement
-def enhance_image(img, target_width=800):
-    if img is None or getattr(img, "size", 0) == 0:
-        return img
-    h, w = img.shape[:2]
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2Lab)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(6, 6))
-    l = clahe.apply(l)
-    lab = cv2.merge((l, a, b))
-    enh = cv2.cvtColor(lab, cv2.COLOR_Lab2BGR)
-    try:
-        enh = cv2.bilateralFilter(enh, 9, 75, 75)
-    except:
-        pass
-    try:
-        enh = cv2.fastNlMeansDenoisingColored(enh, None, 12, 12, 7, 21)
-    except:
-        pass
-    blur = cv2.GaussianBlur(enh, (0, 0), 1.5)
-    enh = cv2.addWeighted(enh, 2.5, blur, -1.5, 0)
-    if w < target_width:
-        scale = target_width / float(w)
-        enh = cv2.resize(enh, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_CUBIC)
-    return enh
 
 # Detect plate region
 def detect_plate_region(img, min_width=50, max_width=None):
@@ -152,49 +91,25 @@ def enhance_plate(img):
     
     return gray
 # OCR
-def ocr_plate_multi(img):
-    if img is None or getattr(img, "size", 0) == 0:
-        return ""
-    plate = detect_plate_region(img)
-    if plate is None or plate.size == 0:
-        plate = img
-
-    h, w = plate.shape[:2]
-    gray = cv2.cvtColor(plate, cv2.COLOR_BGR2GRAY)
-
-    # CLAHE
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    gray = clahe.apply(gray)
-
-    # Sharpen
-    kernel = np.array([[0,-1,0],[-1,5,-1],[0,-1,0]])
-    gray = cv2.filter2D(gray, -1, kernel)
-
-    # Resize
-    scale = max(1, 200 // h)
-    gray = cv2.resize(gray, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_LINEAR)
-
-    # OCR หลาย threshold
-    results_all = []
-    for th_type in [None, cv2.THRESH_BINARY + cv2.THRESH_OTSU, cv2.ADAPTIVE_THRESH_GAUSSIAN_C]:
-        tmp = gray.copy()
-        if th_type is not None:
-            if th_type == cv2.ADAPTIVE_THRESH_GAUSSIAN_C:
-                tmp = cv2.adaptiveThreshold(tmp, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                            cv2.THRESH_BINARY, 11, 2)
-            else:
-                _, tmp = cv2.threshold(tmp, 0, 255, th_type)
-        try:
-            res = _ocr_reader.readtext(tmp)
-            for t in res:
-                if t[2] > 0.3:
-                    results_all.append(t[1])
-        except:
-            continue
-
-    text = "".join(results_all)
-    text = re.sub(r"[^0-9ก-ฮA-Z]", "", text.upper())
-    return text
+def ocr_plate_multi(frame, x1, y1, x2, y2):
+    frame = frame[y1:y2, x1: x2]
+    result = ocr.ocr(frame, det=False, rec = True, cls = False)
+    text = ""
+    for r in result:
+        #print("OCR", r)
+        scores = r[0][1]
+        if np.isnan(scores):
+            scores = 0
+        else:
+            scores = int(scores * 100)
+        if scores > 60:
+            text = r[0][0]
+    pattern = re.compile('[\W]')
+    text = pattern.sub('', text)
+    text = text.replace("???", "")
+    text = text.replace("O", "0")
+    text = text.replace("粤", "")
+    return str(text)
 
 # Clean plate text (Thai)
 def clean_plate_text_thai(text):
@@ -219,7 +134,79 @@ def log_detection(plate_text, filename, bbox):
             writer.writerow([ts, plate_text, filename, str(bbox)])
     except Exception as e:
         print("log_detection error:", e)
+def save_json(license_plates, startTime, endTime):
+    #Generate individual JSON files for each 20-second interval
+    interval_data = {
+        "Start Time": startTime.isoformat(),
+        "End Time": endTime.isoformat(),
+        "License Plate": list(license_plates)
+    }
+    interval_file_path = "json/output_" + datetime.now().strftime("%Y%m%d%H%M%S") + ".json"
+    with open(interval_file_path, 'w') as f:
+        json.dump(interval_data, f, indent = 2)
 
+    #Cummulative JSON File
+    cummulative_file_path = "json/LicensePlateData.json"
+    if os.path.exists(cummulative_file_path):
+        with open(cummulative_file_path, 'r') as f:
+            existing_data = json.load(f)
+    else:
+        existing_data = []
+
+    #Add new intervaal data to cummulative data
+    existing_data.append(interval_data)
+
+    with open(cummulative_file_path, 'w') as f:
+        json.dump(existing_data, f, indent = 2)
+
+    #Save data to SQL database
+    save_to_database(license_plates, startTime, endTime)
+def save_to_database(license_plates, start_time, end_time):
+        conn = sqlite3.connect('licensePlatesDatabase.db')
+        cursor = conn.cursor()
+        for plate in license_plates:
+            cursor.execute('''
+                INSERT INTO LicensePlates(start_time, end_time, license_plate)
+                VALUES (?, ?, ?)
+            ''', (start_time.isoformat(), end_time.isoformat(), plate))
+        conn.commit()
+        conn.close()
+    startTime = datetime.now()
+    license_plates = set()
+    while True:
+        ret, frame = cap.read()
+        if ret:
+            currentTime = datetime.now()
+            count += 1
+            print(f"Frame Number: {count}")
+            results = model.predict(frame, conf = 0.45)
+            for result in results:
+                boxes = result.boxes
+                for box in boxes:
+                    x1, y1, x2, y2 = box.xyxy[0]
+                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                    classNameInt = int(box.cls[0])
+                    clsName = className[classNameInt]
+                    conf = math.ceil(box.conf[0]*100)/100
+                    #label = f'{clsName}:{conf}'
+                    label = paddle_ocr(frame, x1, y1, x2, y2)
+                    if label:
+                        license_plates.add(label)
+                    textSize = cv2.getTextSize(label, 0, fontScale=0.5, thickness=2)[0]
+                    c2 = x1 + textSize[0], y1 - textSize[1] - 3
+                    cv2.rectangle(frame, (x1, y1), c2, (255, 0, 0), -1)
+                    cv2.putText(frame, label, (x1, y1 - 2), 0, 0.5, [255,255,255], thickness=1, lineType=cv2.LINE_AA)
+            if (currentTime - startTime).seconds >= 20:
+                endTime = currentTime
+                save_json(license_plates, startTime, endTime)
+                startTime = currentTime
+                license_plates.clear()
+            cv2.imshow("Video", frame)
+            if cv2.waitKey(1) & 0xFF == ord('1'):
+                break
+        else:
+            break
 class App:
     def __init__(self, root):
         self.root = root
@@ -832,3 +819,4 @@ if __name__ == "__main__":
     root.after(30, app.update_canvas)
     root.protocol("WM_DELETE_WINDOW", app.stop)
     root.mainloop()
+
